@@ -2,7 +2,7 @@
 channel = "stable-22_11"
 
 [deployment]
-run = ["sh", "-c", "python slack_message_handler.py"]
+run = ["python", "main.py"]
 
 [[ports]]
 localPort = 3000
