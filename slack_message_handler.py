@@ -1,12 +1,36 @@
 import os
 import json
-import requests
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 from datetime import datetime
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from notion_client import Client
 from dotenv import load_dotenv
+
+def http_request(url, method='GET', headers=None, data=None):
+    """Helper function to make HTTP requests using urllib"""
+    if headers is None:
+        headers = {}
+    
+    req = Request(url, method=method, headers=headers)
+    if data:
+        if isinstance(data, dict):
+            data = json.dumps(data).encode('utf-8')
+        req.data = data
+    
+    try:
+        with urlopen(req) as response:
+            return {
+                'status_code': response.status,
+                'text': response.read().decode('utf-8'),
+                'json': lambda: json.loads(response.read().decode('utf-8'))
+            }
+    except HTTPError as e:
+        return {'status_code': e.code, 'text': e.read().decode('utf-8')}
+    except URLError as e:
+        return {'status_code': 500, 'text': str(e)}
 
 # Load environment variables
 load_dotenv()
@@ -163,47 +187,69 @@ def handle_reaction_added(event):
 def get_slack_message(channel_id, message_ts):
     """Get the original message details"""
     try:
-        response = slack_client.conversations_history(
-            channel=channel_id,
-            latest=message_ts,
-            limit=1,
-            inclusive=True
+        response = http_request(
+            f"https://slack.com/api/conversations.history?channel={channel_id}&latest={message_ts}&limit=1&inclusive=true",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
         )
+        message_data = json.loads(response['text'])
         
-        if response['ok'] and response['messages']:
-            message = response['messages'][0]
-            return {
-                'user': message.get('user'),
-                'text': message.get('text', ''),
-                'ts': message.get('ts')
-            }
-    except SlackApiError as e:
-        print(f"Error getting message: {e.response['error']}")
+        if not message_data.get('ok') or not message_data.get('messages'):
+            print(f"Error getting message: {message_data.get('error', 'Unknown error')}")
+            return None
+            
+        message = message_data['messages'][0]
+        
+        # Get user info
+        user_response = http_request(
+            f"https://slack.com/api/users.info?user={message['user']}",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+        )
+        user_data = json.loads(user_response['text'])
+        
+        if not user_data.get('ok'):
+            print(f"Error getting user info: {user_data.get('error', 'Unknown error')}")
+            return None
+            
+        return {
+            'text': message.get('text', ''),
+            'user_id': message['user'],
+            'user_name': user_data['user']['real_name'],
+            'user_email': user_data['user']['profile']['email'],
+            'timestamp': message['ts'],
+            'thread_ts': message.get('thread_ts', message['ts']),
+            'channel_id': channel_id
+        }
+        
     except Exception as e:
-        print(f"Unexpected error getting message: {e}")
-    
-    return None
+        print(f"Error getting message: {e}")
+        return None
 
 def reply_to_sales(channel_id, message_ts, user_id):
     """Reply to the sales user in the original channel"""
     try:
         reply_text = f"Hi <@{user_id}>, we received your message and your request is scheduled for assessment now."
         
-        response = slack_client.chat_postMessage(
-            channel=channel_id,
-            text=reply_text,
-            thread_ts=message_ts
+        response = http_request(
+            "https://slack.com/api/chat.postMessage",
+            method='POST',
+            headers={
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Content-Type": "application/json"
+            },
+            data={
+                "channel": channel_id,
+                "thread_ts": message_ts,
+                "text": reply_text
+            }
         )
         
-        if response['ok']:
+        if response['status_code'] == 200:
             print(f"✅ Replied to sales user in message {message_ts}")
         else:
-            print(f"❌ Error replying to sales user: {response.get('error')}")
+            print(f"❌ Error replying to sales user: {response.get('text')}")
             
-    except SlackApiError as e:
-        print(f"Slack API error replying to sales user: {e.response['error']}")
     except Exception as e:
-        print(f"Unexpected error replying to sales user: {e}")
+        print(f"Error replying to sales user: {e}")
 
 def notify_pm_team(message_info, notion_page_url, original_channel_id, message_ts):
     """Send notification to PM team channel about new request"""
@@ -237,21 +283,27 @@ def notify_pm_team(message_info, notion_page_url, original_channel_id, message_t
             f"<@U08UUNJ86P7> FYI - new business request added for assessment"
         )
         
-        response = slack_client.chat_postMessage(
-            channel=PM_NOTIFICATION_CHANNEL_ID,
-            text=notification_text,
-            unfurl_links=False
+        response = http_request(
+            "https://slack.com/api/chat.postMessage",
+            method='POST',
+            headers={
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Content-Type": "application/json"
+            },
+            data={
+                "channel": PM_NOTIFICATION_CHANNEL_ID,
+                "text": notification_text,
+                "unfurl_links": False
+            }
         )
         
-        if response['ok']:
+        if response['status_code'] == 200:
             print(f"✅ Notified PM team in channel {PM_NOTIFICATION_CHANNEL_ID}")
         else:
-            print(f"❌ Error notifying PM team: {response.get('error')}")
+            print(f"❌ Error notifying PM team: {response.get('text')}")
             
-    except SlackApiError as e:
-        print(f"Slack API error notifying PM team: {e.response['error']}")
     except Exception as e:
-        print(f"Unexpected error notifying PM team: {e}")
+        print(f"Error notifying PM team: {e}")
 
 def create_notion_page(message_info, channel_id, message_ts):
     """Create a new page in Notion database"""
