@@ -1,8 +1,17 @@
 [nix]
-channel = "stable-22_11"
+channel = "stable-22.11"
 
 [deployment]
-run = ["gunicorn", "--bind", "0.0.0.0:3000", "slack_message_handler:app"]
+run = ["python", "main.py"]
+
+[interpreter]
+command = ["python3"]
+
+[packager]
+ignoredPaths = ["venv", ".git"]
+
+[packager.requiredFiles]
+"requirements.txt" = "latest"
 
 [[ports]]
 localPort = 3000
