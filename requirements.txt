@@ -1,0 +1,5 @@
+flask
+slack_sdk
+notion_client
+python-dotenv
+gunicorn
