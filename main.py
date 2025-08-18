@@ -26,5 +26,5 @@ if __name__ == '__main__':
     print(f"📺 Monitoring channel: {os.getenv('SLACK_CHANNEL_ID')}")
     print(f"📢 PM notification channel: {os.getenv('PM_NOTIFICATION_CHANNEL_ID')}")
     
-    # Run the Flask app (production mode for Replit)
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # Run the Flask app (debug mode for external access on Replit)
+    app.run(host='0.0.0.0', port=port, debug=True, threaded=True)
