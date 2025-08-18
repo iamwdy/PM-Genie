@@ -161,7 +161,7 @@ def handle_reaction_added(event):
         except Exception as e:
             print(f"Warning: Could not get bot user ID: {e}")
         
-        if bot_user_id and message_info.get('user') == bot_user_id:
+        if bot_user_id and message_info.get('user_id') == bot_user_id:
             print(f"🤖 Skipping reaction to bot's own message from {bot_user_id}")
             processed_messages.discard(message_ts)  # Remove from processed set
             return
@@ -169,7 +169,7 @@ def handle_reaction_added(event):
         print(f"Got message info: {message_info}")
         
         # Reply to the sales user
-        reply_to_sales(channel_id, message_ts, message_info['user'])
+        reply_to_sales(channel_id, message_ts, message_info['user_id'])
         
         # Create Notion page
         notion_page_url = create_notion_page(message_info, channel_id, message_ts)
@@ -203,6 +203,11 @@ def get_slack_message(channel_id, message_ts):
             
         message = message_data['messages'][0]
         
+        # Check if message has user field
+        if 'user' not in message:
+            print(f"Message does not have a 'user' field: {message}")
+            return None
+        
         # Get user info
         user_response = http_request(
             f"https://slack.com/api/users.info?user={message['user']}",
@@ -216,9 +221,9 @@ def get_slack_message(channel_id, message_ts):
             
         return {
             'text': message.get('text', ''),
-            'user_id': message['user'],
-            'user_name': user_data['user']['real_name'],
-            'user_email': user_data['user']['profile']['email'],
+            'user_id': message.get('user', 'unknown_user'),
+            'user_name': user_data.get('user', {}).get('real_name', 'Unknown User'),
+            'user_email': user_data.get('user', {}).get('profile', {}).get('email', 'unknown@email.com'),
             'timestamp': message['ts'],
             'thread_ts': message.get('thread_ts', message['ts']),
             'channel_id': channel_id
@@ -259,7 +264,7 @@ def notify_pm_team(message_info, notion_page_url, original_channel_id, message_t
     """Send notification to PM team channel about new request"""
     try:
         # Get the original user's display name
-        user_id = message_info.get('user', '')
+        user_id = message_info.get('user_id', '')
         display_name = user_id
         
         try:
@@ -320,7 +325,7 @@ def create_notion_page(message_info, channel_id, message_ts):
         # thread_link = f"{workspace_url}/T{channel_id[1:]}/{channel_id}/p{message_ts.replace('.', '')}"
         
         # Get user's actual name from Slack
-        user_id = message_info.get('user', '')
+        user_id = message_info.get('user_id', '')
         user_name = user_id  # Default to user_id if we can't get the name
         display_name = user_name  # What we'll show in Notion
         
