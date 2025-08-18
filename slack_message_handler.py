@@ -68,29 +68,33 @@ processed_messages = set()  # Store message timestamps that have been processed
 @app.route('/slack/events', methods=['POST'])
 def slack_events():
     """Handle Slack events"""
-    data = request.get_json()
-    
-    # Debug: Log the event type
-    print(f"Received Slack event: {data.get('type')}")
-    if data.get('type') == 'event_callback':
-        event = data.get('event', {})
-        print(f"Event type: {event.get('type')}")
-        print(f"Event details: {event}")
-    
-    # Handle URL verification challenge
-    if data.get('type') == 'url_verification':
-        return jsonify({'challenge': data.get('challenge')})
-    
-    # Handle events
-    if data.get('type') == 'event_callback':
-        event = data.get('event', {})
+    try:
+        data = request.get_json()
         
-        # Handle reaction added event
-        if event.get('type') == 'reaction_added':
-            print("Processing reaction_added event")
-            handle_reaction_added(event)
-    
-    return jsonify({'status': 'ok'})
+        # Debug: Log the event type
+        print(f"📥 Received Slack event: {data.get('type') if data else 'No data'}")
+        
+        # Handle URL verification challenge (this is what Slack sends first)
+        if data and data.get('type') == 'url_verification':
+            challenge = data.get('challenge')
+            print(f"✅ URL verification challenge received: {challenge}")
+            return jsonify({'challenge': challenge})
+        
+        # Handle events
+        if data and data.get('type') == 'event_callback':
+            event = data.get('event', {})
+            print(f"📨 Event type: {event.get('type')}")
+            
+            # Handle reaction added event
+            if event.get('type') == 'reaction_added':
+                print("⚡ Processing reaction_added event")
+                handle_reaction_added(event)
+        
+        return jsonify({'status': 'ok'})
+        
+    except Exception as e:
+        print(f"❌ Error in slack_events: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 def handle_reaction_added(event):
     """Handle when a reaction is added to a message"""
@@ -495,6 +499,15 @@ def create_notion_page(message_info, channel_id, message_ts):
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/slack/events', methods=['GET'])
+def slack_events_test():
+    """Test endpoint for Slack webhook URL"""
+    return jsonify({
+        'status': 'webhook_ready', 
+        'message': 'Slack webhook endpoint is accessible',
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/', methods=['GET'])
 def index():
