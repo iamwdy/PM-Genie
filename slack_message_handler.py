@@ -496,6 +496,11 @@ def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
+@app.route('/', methods=['GET'])
+def index():
+    """Root endpoint for platform health checks"""
+    return jsonify({'status': 'ok'})
+
 if __name__ == '__main__':
     # Check required environment variables
     required_vars = [
@@ -516,6 +521,3 @@ if __name__ == '__main__':
     print(f"👥 PM team members: {PM_TEAM_USER_IDS}")
     print(f"📊 Notion database: {NOTION_DATABASE_ID}")
     print(f"🏷️  Default tag: {NOTION_TAG_VALUE}")
-    
-    # Run the Flask app
-    app.run(host='0.0.0.0', port=3000, debug=True) 

@@ -2,7 +2,7 @@
 channel = "stable-22.11"
 
 [deployment]
-run = ["python", "main.py"]
+run = ["python3", "-m", "gunicorn", "--bind", "0.0.0.0:3000", "slack_message_handler:app"]
 
 [interpreter]
 command = ["python3"]
