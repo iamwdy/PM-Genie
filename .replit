@@ -1,6 +1,9 @@
 [nix]
 channel = "stable-22.11"
 
+[run]
+run = "python3 -m gunicorn --bind 0.0.0.0:3000 slack_message_handler:app"
+
 [deployment]
 run = ["python3", "-m", "gunicorn", "--bind", "0.0.0.0:3000", "slack_message_handler:app"]
 
