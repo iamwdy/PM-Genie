@@ -31,14 +31,20 @@ slack_user_id_cache = {}
 TASK_STATUS_PROPERTY = "Status"
 TASK_PIC_PROPERTY = "PIC"
 TASK_DDL_PROPERTY = "DDL"
-TASK_PARENT_RELATION_PROPERTY = "Parent task"
+TASK_PARENT_RELATION_PROPERTY = "Parent task"  # no longer used
 TASK_CREATED_TIME_PROPERTY = "Created Time"
 TASK_COUNTDOWN_PROPERTY = "Countdown"
-TASK_SUBTASK_PROGRESS_PROPERTY = "Subtask Progress"
+TASK_ACTION_PROGRESS_PROPERTY = "Action Progress"
 TASK_DISCUSS_CHECKBOX_PROPERTY = "Discuss in this week meeting?"
 TASK_TOPIC_TYPE_PROPERTY = "Topic Type"
 
-PENDING_STATUSES = ["Not started", "In progress", "On Hold"]
+# Only include the following Status options from Notion (as shown in the screenshot)
+ALLOWED_STATUSES = [
+    "Not started",
+    "On Hold",
+    "In Progress - Action Needed",
+    "In progress - On Track",
+]
 NOT_STARTED_STATUSES = ["Not started"]
 
 LONG_CREATED_THRESHOLD_DAYS = 7
@@ -50,7 +56,8 @@ EXCLUDE_PICS = [
 STATUS_EMOJI_MAP = {
     "Not started": ":no_entry:",
     "On Hold": ":double_vertical_bar:",
-    "In progress": ":loading:",
+    "In Progress - Action Needed": ":warning:",
+    "In progress - On Track": ":loading:",
 }
 
 SLACK_USER_MAPPING = {
@@ -124,19 +131,11 @@ def analyze_tasks(tasks):
 
     for task in tasks:
         task_status = get_property_value(task, TASK_STATUS_PROPERTY, "status", "Unknown Status")
-        if task_status == "Done":
+        # Only keep tasks whose Status is in the allowed list
+        if task_status not in ALLOWED_STATUSES:
             continue
 
         pic_values_list = get_property_value(task, TASK_PIC_PROPERTY, "people", ["Unassigned"])
-        
-        is_sub_task = False
-        if TASK_PARENT_RELATION_PROPERTY in task["properties"] and \
-           task["properties"][TASK_PARENT_RELATION_PROPERTY]["relation"]:
-            if task["properties"][TASK_PARENT_RELATION_PROPERTY]["relation"]:
-                is_sub_task = True
-        
-        if is_sub_task:
-            continue
 
         for pic_value in pic_values_list:
             if pic_value in EXCLUDE_PICS:
@@ -169,7 +168,6 @@ def get_property_value(task_page, property_name, property_type, default_value=No
             if prop_value["type"] == "title":
                 if not prop_value["title"]:
                     return default_value
-                
                 extracted_title = "".join([text_obj["plain_text"] for text_obj in prop_value["title"]])
                 return extracted_title if extracted_title else default_value
         return default_value
@@ -236,11 +234,34 @@ def get_property_value(task_page, property_name, property_type, default_value=No
     
     return default_value
 
+def get_action_progress_value(task_page):
+    """
+    Try to fetch Action Progress regardless of whether it's a rollup, formula, or select.
+    Returns None if not present.
+    """
+    # Try rollup
+    val = get_property_value(task_page, TASK_ACTION_PROGRESS_PROPERTY, "rollup", None)
+    if val is not None:
+        return val
+    # Try formula
+    val = get_property_value(task_page, TASK_ACTION_PROGRESS_PROPERTY, "formula", None)
+    if val is not None:
+        return val
+    # Try select
+    val = get_property_value(task_page, TASK_ACTION_PROGRESS_PROPERTY, "select", None)
+    if val is not None:
+        return val
+    # Try rich_text as last resort
+    val = get_property_value(task_page, TASK_ACTION_PROGRESS_PROPERTY, "rich_text", None)
+    return val
+
 def format_slack_message(organized_tasks_by_pic):
     """
     Formats the task analysis into a Slack message, grouped by PIC.
     """
     message_blocks = []
+    MAX_BLOCK_TEXT_LENGTH = 2900  # Slack section text max is 3000
+    MAX_BLOCKS = 45  # keep buffer under Slack's 50 block limit
     
     message_blocks.append({
         "type": "section",
@@ -250,10 +271,11 @@ def format_slack_message(organized_tasks_by_pic):
         }
     })
     emoji_explanation_text = (
-        "Here's a quick guide to task statuses:\n"
+        "Here's a quick guide to task statuses (only these are listed):\n"
         f"• Not started: {STATUS_EMOJI_MAP.get('Not started', '')}\n"
         f"• On Hold: {STATUS_EMOJI_MAP.get('On Hold', '')}\n"
-        f"• In Progress: {STATUS_EMOJI_MAP.get('In progress', '')}\n\n"
+        f"• In Progress - Action Needed: {STATUS_EMOJI_MAP.get('In Progress - Action Needed', '')}\n"
+        f"• In progress - On Track: {STATUS_EMOJI_MAP.get('In progress - On Track', '')}\n\n"
         "It's Monday morning! Time to update your meeting items and tackle the week ahead. 💪"
     )
     message_blocks.append({
@@ -323,7 +345,7 @@ def format_slack_message(organized_tasks_by_pic):
                     task_status = get_property_value(task, TASK_STATUS_PROPERTY, "status", "Unknown Status")
                     task_ddl = get_property_value(task, TASK_DDL_PROPERTY, "date", "No Due Date")
                     task_countdown = get_property_value(task, TASK_COUNTDOWN_PROPERTY, "formula", None)
-                    task_subtask_progress = get_property_value(task, TASK_SUBTASK_PROGRESS_PROPERTY, "rollup", None)
+                    action_progress = get_action_progress_value(task)
                     task_url = task["url"]
                     
                     status_emoji = STATUS_EMOJI_MAP.get(task_status, "")
@@ -341,19 +363,40 @@ def format_slack_message(organized_tasks_by_pic):
                             ddl_text = "Due Date is Required"
                             pic_tasks_markdown += f"    ◦ DDL: `{ddl_text}`\n"
 
-                        if task_subtask_progress:
-                            pic_tasks_markdown += f"    ◦ Subtask Progress: `{task_subtask_progress}`\n"
+                        if action_progress:
+                            pic_tasks_markdown += f"    ◦ Action Progress: `{action_progress}`\n"
                         
                         pic_tasks_markdown += "\n" 
 
                 if pic_tasks_markdown.strip():
-                    message_blocks.append({
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": pic_tasks_markdown.strip()
-                        }
-                    })
+                    # Chunk the content to avoid exceeding Slack's per-block text limit
+                    def _chunk_text(s: str, max_len: int):
+                        chunks = []
+                        current = ""
+                        for line in s.splitlines(True):  # keep newlines
+                            if len(current) + len(line) > max_len and current:
+                                chunks.append(current)
+                                current = line
+                            else:
+                                current += line
+                        if current.strip():
+                            chunks.append(current)
+                        return chunks
+
+                    for chunk in _chunk_text(pic_tasks_markdown.strip(), MAX_BLOCK_TEXT_LENGTH):
+                        if len(message_blocks) >= MAX_BLOCKS:
+                            message_blocks.append({
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": "_Output truncated to fit Slack limits..._"}
+                            })
+                            break
+                        message_blocks.append({
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": chunk
+                            }
+                        })
             message_blocks.append({"type": "divider"})
 
     return message_blocks
@@ -373,7 +416,7 @@ def post_slack_message(blocks):
             blocks=blocks
         )
         if response["ok"]:
-            print(f"Message successfully posted to Slack channel: {SLACK_CHANNEL_ID}")
+            print(f"Message successfully posted to Slack channel: {OFFICIAL_CHANNEL_ID}")
         else:
             print(f"Error posting message to Slack: {response['error']}")
     except SlackApiError as e:
