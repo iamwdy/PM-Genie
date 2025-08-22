@@ -5,6 +5,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from notion_client import Client
 import sys # Import sys to read command-line arguments
+import argparse
 
 # 從 .env 文件加載環境變數
 load_dotenv()
@@ -401,7 +402,7 @@ def format_slack_message(organized_tasks_by_pic):
 
     return message_blocks
 
-def post_slack_message(blocks):
+def post_slack_message(blocks, channel_id=None):
     """
     Posts the formatted message blocks to the specified Slack channel.
     """
@@ -410,13 +411,14 @@ def post_slack_message(blocks):
         fallback_text = blocks[0]["text"]["text"]
 
     try:
+        target_channel = channel_id or OFFICIAL_CHANNEL_ID
         response = slack_client.chat_postMessage(
-            channel=OFFICIAL_CHANNEL_ID,
+            channel=target_channel,
             text=fallback_text,
             blocks=blocks
         )
         if response["ok"]:
-            print(f"Message successfully posted to Slack channel: {OFFICIAL_CHANNEL_ID}")
+            print(f"Message successfully posted to Slack channel: {target_channel}")
         else:
             print(f"Error posting message to Slack: {response['error']}")
     except SlackApiError as e:
@@ -424,7 +426,7 @@ def post_slack_message(blocks):
     except Exception as e:
         print(f"An unexpected error occurred while posting to Slack: {e}")
 
-def send_weekly_task_update():
+def send_weekly_task_update(channel_id=None):
     """
     Fetches Notion tasks, analyzes them, and posts the weekly update to Slack.
     """
@@ -433,12 +435,12 @@ def send_weekly_task_update():
     if tasks:
         organized_tasks_data = analyze_tasks(tasks)
         slack_message_blocks = format_slack_message(organized_tasks_data)
-        post_slack_message(slack_message_blocks)
+        post_slack_message(slack_message_blocks, channel_id=channel_id)
     else:
         print("No tasks fetched or an error occurred. Skipping Slack message post.")
     print("Weekly Task Update process finished.")
 
-def send_last_call_reminder():
+def send_last_call_reminder(channel_id=None):
     """
     Sends a 'last call for update' reminder message to Slack.
     This also lists discussion topics for the meeting.
@@ -557,7 +559,7 @@ def send_last_call_reminder():
             }
         ]
     })
-    post_slack_message(reminder_blocks)
+    post_slack_message(reminder_blocks, channel_id=channel_id)
     print("Last Call Reminder process finished.")
 
 
@@ -567,18 +569,15 @@ if __name__ == "__main__":
         print("Error: One or more environment variables are missing. Please check your .env file.")
         sys.exit(1)
 
-    if len(sys.argv) > 1:
-        reminder_type = sys.argv[1]
-        if reminder_type == REMINDER_TYPE_WEEKLY_UPDATE:
-            send_weekly_task_update()
-        elif reminder_type == REMINDER_TYPE_LAST_CALL:
-            send_last_call_reminder()
-        else:
-            print(f"Error: Unknown reminder type '{reminder_type}'. Valid types are '{REMINDER_TYPE_WEEKLY_UPDATE}', '{REMINDER_TYPE_LAST_CALL}', or '{REMINDER_TYPE_SPRINT_REMINDER}'.")
-            sys.exit(1)
-    else:
-        print("Error: No reminder type specified. Please run with an argument (e.g., 'python3 your_script.py weekly_update').")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Notion-Slack Bot Commands")
+    parser.add_argument("command", choices=[REMINDER_TYPE_WEEKLY_UPDATE, REMINDER_TYPE_LAST_CALL], help="Which reminder to run")
+    parser.add_argument("--channel", dest="channel", default=None, help="Override Slack channel ID for this run")
+    args = parser.parse_args()
+
+    if args.command == REMINDER_TYPE_WEEKLY_UPDATE:
+        send_weekly_task_update(channel_id=args.channel)
+    elif args.command == REMINDER_TYPE_LAST_CALL:
+        send_last_call_reminder(channel_id=args.channel)
 
 
 
